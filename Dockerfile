@@ -122,8 +122,7 @@ RUN touch /root/sclang_conf.yaml
 # Install Quarks
 WORKDIR /root
 
-RUN xvfb-run sclang -l sclang_conf.yaml
-#RUN xvfb-run sclang -l sclang_conf.yaml
+RUN xvfb-run sclang -l sclang_conf.yaml; exit 0
 
 # Copy permanent supercollider/superdirt startup file
 COPY configs/startup.scd /root/.sclang.sc
@@ -137,6 +136,7 @@ RUN git clone https://efairbanks@github.com/efairbanks/ghcudp.git
 WORKDIR /repos/ghcudp
 RUN ./build.sh
 COPY tidal/init.tidal /root/.ghci
+COPY tidal/lib.tidal /root/lib.hs
 
 EXPOSE 9999/udp
 

@@ -1,0 +1,240 @@
+import Sound.Tidal.Context
+import Sound.Tidal.Bjorklund
+import Sound.Tidal.Utils
+import Sound.Tidal.Chords
+
+----------------------------
+----------------------------
+
+--TO DO:
+--function for indexing into a list of patterns
+--function for adding leading tails to all patterns
+--function for turning a list of numbers into indexes into a chord-scale spread across a specific range
+--function for turning a combination of LFOs in to a pattern
+--function for creating your own LFOs
+
+----------------------------
+----------------------------
+
+slice cycles slices indexPattern p = fit' cycles slices (slow cycles $ run slicesPat) (slow cycles $ indexPattern) (loopAt cycles $ chop slicesPat $ p)
+        where slicesPat = (listToPat $ [slices])
+pik rs p = fit (length rs) rs p
+focus a b p = slow (listToPat [(b-a)]) $ zoom (toRational $ a, toRational $ b) $ p
+focus' (a,b) p = slow (pure $ b-a) $ zoom (toRational $ a, toRational $ b) p
+disable dis p = p
+
+----------------------------
+----------------------------
+
+whenmodr speeds numerators denominators modifier pattern
+    | done = modifiedpattern
+    | otherwise =  whenmodr rests restn restd modifier modifiedpattern
+    where modifiedpattern = inside speed (whenmod numerator denominator (modifier)) $ pattern
+          numerator = (head numerators)
+          denominator = (head denominators)
+          speed = (head speeds)
+          done = (null $ tail speeds) && (null $ tail numerators) && (null $ tail denominators)
+          restn = if null (tail numerators) then [numerator] else (tail numerators)
+          restd = if null (tail denominators) then [denominator] else (tail denominators)
+          rests = if null (tail speeds) then [speed] else (tail speeds)
+whenmods' speeds numerators denominators modifier pattern
+    | done = modifiedpattern
+    | otherwise =  whenmods' rests restn restd modifier modifiedpattern
+    where modifiedpattern = inside speed (whenmod numerator denominator ((slow speed).(modifier))) $ pattern
+          numerator = (head numerators)
+          denominator = (head denominators)
+          speed = (head speeds)
+          done = (null $ tail speeds) && (null $ tail numerators) && (null $ tail denominators)
+          restn = if null (tail numerators) then [numerator] else (tail numerators)
+          restd = if null (tail denominators) then [denominator] else (tail denominators)
+          rests = if null (tail speeds) then [speed] else (tail speeds)
+whenmods speeds numerators denominators newpattern pattern =
+  whenmods' speeds numerators denominators (const newpattern) pattern
+
+----------------------------
+----------------------------
+
+saturate amount = superimpose ((# shape amount).(# hcutoff 6500).(|*| gain 0.9))
+
+----------------------------
+----------------------------
+
+clamp = make' VF clamp_p
+clamp_p = F "clamp" Nothing
+
+----------------------------
+----------------------------
+
+octceil by upper noteval =
+  if noteval>upper then octceil by upper (noteval - by) else noteval
+octfloor by lower noteval =
+  if noteval<lower then octfloor by lower (noteval + by) else noteval
+notemap f =
+  withI n_p (f <$>)
+clampoctavesn lower upper =
+  notemap ((octfloor 12 lower).(octceil 12 upper))
+clampoctaves lower upper =
+  fmap ((octfloor 12 lower).(octceil 12 upper))
+up' p = up (fmap fromIntegral p)
+
+----------------------------
+----------------------------
+
+cycles2minutes cps ncycles = ((1/cps)*ncycles)/60
+minutes2cycles cps minutes = (minutes*60)/(1/cps)
+
+----------------------------
+----------------------------
+
+integrate' x l =
+  if (length l) > 0
+    then [runningSum] ++ integrate' runningSum (tail l)
+    else []
+  where runningSum = x + (head l)
+integrate = integrate' 0
+
+----------------------------
+----------------------------
+
+matchedIndices' i f l =
+  if (length l) > 0
+    then matchedIndex ++ (matchedIndices' (i+1) f (tail l))
+    else []
+  where matchedIndex = if (f $ head l) then [i] else []
+matchedIndices = matchedIndices' 0
+
+replaceIndices' i r il l =
+  if (min (length l) (length il)) > 0
+    then [newVal] ++ (replaceIndices' (i+1) r il (tail l))
+    else []
+  where newVal = if (elem i il) then r else (head l)
+replaceIndices = replaceIndices' 0
+
+bjorkSelect find replace n l =
+  replaceIndices replace (matchedIndices id $ bjorklund (n, (length l))) l
+
+convertBools t f = map (\x -> if x then t else f)
+
+bjorkBuildHierarchy' i pattern selects =
+  if (length selects) > 0
+    then bjorkBuildHierarchy' (i + 1) (bjorkSelect i (i + 1) (head selects) pattern) (tail selects)
+    else pattern
+
+bjorkBuildHierarchy n selects =
+  bjorkBuildHierarchy' 0 (replicate n 0) selects
+
+----------------------------
+----------------------------
+
+makeSeqPattern' :: Num a => a -> a -> [a] -> [t] -> [(a, a, t)]
+makeSeqPattern' rsum unit l p =
+  if (length l) > 0
+    then [(rsum*unit, ((head l) + rsum)*unit, (head p))] ++ (makeSeqPattern' (rsum + (head l)) unit (tail l) (tail p))
+    else []
+makeSeqPattern unit l p = makeSeqPattern' 0 unit l p
+
+----------------------------
+----------------------------
+
+crazypat :: Num a => Int -> Pattern a
+crazypat patlen = slow ((((fromIntegral patlen)*2)/16)) $ listToPat $ bjorkBuildHierarchy patlen [23,19,15,11,7,4,2]
+
+crazypatchop :: Int -> Pattern a -> Pattern a
+crazypatchop patlen = fit' 1 8 (run 8) (crazypat patlen)
+
+seqcpc p = slowcat [crazypatchop 30 $ p]
+seqcpc' n p = slowcat [crazypatchop n $ p]
+
+----------------------------
+----------------------------
+
+seqhelper i unit f l p =
+  if (length l) > 0
+    then [(toRational (i*unit),toRational (i*unit*(head l)),f (head l) p)] ++ (seqhelper (i+(head l)) unit f (tail l) p)
+    else []
+
+----------------------------
+----------------------------
+
+applyn times func p = if times > 0 then (applyn (times-1) func (func p)) else p
+riserize sound len grains size = stack [(slow len $ rev $ striate' grains size $ s sound) # gain (slow len $ scale 0 1 saw) # bandf (slow len $ scale 9000 4000 saw) |*| gain (4/3), stut 8 0.6 2 $ slow len $ s sound # hcutoff 1200]
+
+----------------------------
+----------------------------
+
+-- borrowed from tidal snippets
+
+patToArcs :: Pattern a -> [Event a]
+patToArcs x = arc x (0, 1)
+
+patLen :: Pattern a -> (Time, Time)
+patLen x = fix s e where
+  s  = minimum $ map eventOnset  aa
+  e  = maximum $ map eventOffset aa
+  aa = patToArcs x
+  fix a b
+    | a >= 0 = (a, b)
+    | otherwise = (0, abs(a) + b)
+
+patLen' :: Pattern a -> (Float, Float)
+patLen' = c . patLen where
+  c (a, b) = (fromRational a, fromRational b)
+
+----------------------------
+----------------------------
+
+contToPat  n p = round <$> discretise n p
+contToPat' a b = round <$> struct a b
+c2p  = contToPat
+c2p' = contToPat'
+scaleP' :: Pattern [Int] -> Pattern Int -> Pattern Int
+scaleP' sp p = (\n scalePat -> noteInScale scalePat n) <$> p <*> sp
+   where octave s x = x `div` (length s)
+         noteInScale s x = (s !!! x) + (12 * octave s x)
+mkprog roots chords = (\x l -> fmap (+ (x)) l) <$> roots <*> chordL chords
+prog2arp prog arplfo rhythm = scaleP' prog (c2p' rhythm arplfo)
+prog2pat prog = flatpat prog
+
+----------------------------
+----------------------------
+
+cStartFreq = make' VF cStartFreq_p
+cStartFreq_p = F "cStartFreq" Nothing
+cEndFreq = make' VF cEndFreq_p
+cEndFreq_p = F "cEndFreq" Nothing
+cEnvFMod = make' VF cEnvFMod_p
+cEnvFMod_p = F "cEnvFMod" Nothing
+cEnvPMod = make' VF cEnvPMod_p
+cEnvPMod_p = F "cEnvPMod" Nothing
+mStartFreq = make' VF mStartFreq_p
+mStartFreq_p = F "mStartFreq" Nothing
+mEndFreq = make' VF mEndFreq_p
+mEndFreq_p = F "mEndFreq" Nothing
+mEnvFMod = make' VF mEnvFMod_p
+mEnvFMod_p = F "mEnvFMod" Nothing
+mEnvPMod = make' VF mEnvPMod_p
+mEnvPMod_p = F "mEnvPMod" Nothing
+fMod = make' VF fMod_p
+fMod_p = F "fMod" Nothing
+pMod = make' VF pMod_p
+pMod_p = F "pMod" Nothing
+cFFeedback = make' VF cFFeedback_p
+cFFeedback_p = F "cFFeedback" Nothing
+cPFeedback = make' VF cPFeedback_p
+cPFeedback_p = F "cPFeedback" Nothing
+mFFeedback = make' VF mFFeedback_p
+mFFeedback_p = F "mFFeedback" Nothing
+mPFeedback = make' VF mPFeedback_p
+mPFeedback_p = F "mPFeedback" Nothing
+feedbackDelay = make' VF feedbackDelay_p
+feedbackDelay_p = F "feedbackDelay" Nothing
+attackCurve = make' VF attackCurve_p
+attackCurve_p = F "attackCurve" Nothing
+decayCurve = make' VF decayCurve_p
+decayCurve_p = F "decayCurve" Nothing
+atk = make' VF atk_p
+atk_p = F "atk" Nothing
+dcy = make' VF dcy_p
+dcy_p = F "dcy" Nothing
+midi2freq n = 440.0*(1.9**(n/12.0))
+
